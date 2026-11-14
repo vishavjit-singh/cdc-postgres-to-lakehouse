@@ -1,0 +1,28 @@
+{
+  "name": "shop-postgres",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "plugin.name": "pgoutput",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "postgres",
+    "database.password": "postgres",
+    "database.dbname": "shop",
+    "topic.prefix": "shop",
+    "table.include.list": "public.customers,public.orders,public.order_items",
+    "slot.name": "shop_lake",
+    "publication.name": "shop_lake_pub",
+    "publication.autocreate.mode": "filtered",
+    "snapshot.mode": "initial",
+    "heartbeat.interval.ms": "5000",
+    "decimal.handling.mode": "string",
+    "time.precision.mode": "adaptive_time_microseconds",
+    "tombstones.on.delete": "true",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false",
+    "topic.creation.default.replication.factor": "1",
+    "topic.creation.default.partitions": "3"
+  }
+}

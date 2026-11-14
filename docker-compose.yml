@@ -1,0 +1,100 @@
+# PostgreSQL (logical WAL) → Debezium (Kafka Connect) → Kafka → cdc_lake consumer → ./data/lake
+#   docker compose up -d postgres kafka connect
+#   docker compose run --rm register        # register the Debezium connector, wait for RUNNING
+#   docker compose run --rm workload        # inserts / updates / deletes / PK change / ALTER TABLE
+#   docker compose run --rm consumer        # consume until idle, write bronze + silver
+#   docker compose run --rm reconcile       # silver vs live PostgreSQL: counts + checksums
+name: cdc-lake
+
+x-app: &app
+  build: .
+  image: cdc-lake:latest
+  volumes:
+    - ./data:/app/data
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: shop
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=4", "-c", "max_wal_senders=4"]
+    volumes:
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d shop"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  kafka:
+    image: apache/kafka:3.8.0
+    hostname: kafka
+    ports: ["9094:9094"]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  connect:
+    image: quay.io/debezium/connect:2.7.3.Final
+    depends_on:
+      kafka: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+    ports: ["8083:8083"]
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: cdc-lake-connect
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_statuses
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8083/connectors"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  register:
+    <<: *app
+    depends_on:
+      connect: {condition: service_healthy}
+    command: ["register-connector", "--connect-url", "http://connect:8083"]
+
+  workload:
+    <<: *app
+    depends_on:
+      postgres: {condition: service_healthy}
+    command: ["workload", "--dsn", "postgresql://postgres:postgres@postgres:5432/shop", "--transactions", "400"]
+
+  consumer:
+    <<: *app
+    depends_on:
+      kafka: {condition: service_healthy}
+    command: ["consume", "--source", "kafka", "--bootstrap", "kafka:9092", "--idle-polls", "30"]
+
+  reconcile:
+    <<: *app
+    depends_on:
+      postgres: {condition: service_healthy}
+    command: ["reconcile", "--source-dsn", "postgresql://postgres:postgres@postgres:5432/shop",
+              "--out", "data/reconciliation.json"]

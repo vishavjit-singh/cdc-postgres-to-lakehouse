@@ -1,0 +1,19 @@
+[project]
+name = "cdc-postgres-to-lakehouse"
+version = "1.0.0"
+description = "Change data capture from PostgreSQL with Debezium and Kafka into a bronze change log and silver current-state + SCD2 tables, with exactly-once-effective restarts and reconciliation."
+authors = [{ name = "Vishavjit Singh Saini" }]
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]

@@ -1,0 +1,28 @@
+# CDC pipeline configuration. The same file drives the local replay demo and the docker compose stack.
+topic_prefix: shop                       # Debezium topic.prefix → topics are shop.public.<table>
+heartbeat_topic: __debezium-heartbeat.shop
+
+tables:                                  # primary keys must match the source tables
+  customers:   {primary_key: [id]}
+  orders:      {primary_key: [id]}
+  order_items: {primary_key: [order_id, line_no]}
+
+paths:
+  stream: data/stream                    # local replay: one JSONL log per topic-partition
+  lake: data/lake                        # bronze/ silver/ _checkpoint.json
+  reports: docs/images
+
+consumer:
+  batch_size: 250                        # records per micro-batch (max.poll.records)
+
+simulator:                               # SYNTHETIC workload, only used by the local demo
+  seed: 23
+  start: "2026-11-01T09:00:00Z"
+  customers: 200
+  orders: 300
+  transactions: 900
+  partitions: 3
+  schema_change_at: 450                  # ALTER TABLE customers ADD COLUMN loyalty_points after this tx
+  connector_restart_at: 0.6              # re-send the last N records here (at-least-once delivery)
+  redelivered_records: 120
+  late_events: 15                        # events delivered after newer events for the same key

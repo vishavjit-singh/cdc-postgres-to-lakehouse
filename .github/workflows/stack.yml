@@ -1,0 +1,34 @@
+name: Debezium stack
+
+# Full run on real services: PostgreSQL 16 (logical WAL) → Debezium 2.7 → Kafka 3.8 → consumer → reconcile.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  cdc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p data && chmod 777 data
+      - run: docker compose build
+      - run: docker compose up -d postgres kafka connect
+      - name: Register the Debezium connector
+        run: docker compose run --rm register
+      - name: Run the workload on PostgreSQL
+        run: docker compose run --rm workload
+      - name: Consume until idle
+        run: docker compose run --rm consumer
+      - name: Reconcile silver against PostgreSQL
+        run: docker compose run --rm reconcile
+      - if: always()
+        run: docker compose logs --tail 200 connect
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stack-lake
+          path: data/
+      - if: always()
+        run: docker compose down -v
