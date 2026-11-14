@@ -84,7 +84,6 @@ class Consumer:
                 if idle >= idle_polls:
                     break
                 continue
-            idle = 0
             seq_before = self.seq
             started = time.perf_counter()
             rows, dead, counts, meta = self._process(records)
@@ -106,4 +105,9 @@ class Consumer:
             self.lake.publish_silver(self.states)
             done += 1
             log.info("batch %d: %s", len(self.batches), dict(counts))
+            # Debezium keeps sending heartbeats while the database is quiet, so a poll is rarely empty.
+            # A batch of nothing but heartbeats is committed (its offsets advance) but counts as idle.
+            idle = idle + 1 if counts["records"] == counts["heartbeats"] else 0
+            if idle >= idle_polls:
+                break
         return {"batches": len(self.batches), "stats": dict(self.stats), "offsets": dict(self.offsets)}

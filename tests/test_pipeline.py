@@ -107,3 +107,25 @@ def test_silver_files_are_published(cfg, stream):
     assert {"_lsn", "_deleted", "_op"} <= set(cur.columns)
     assert {"valid_from_ms", "valid_to_ms", "is_current"} <= set(hist.columns)
     assert len(hist) >= len(cur)
+
+
+class HeartbeatsForever:
+    """A quiet database behind Debezium: every poll returns one more heartbeat, never an empty batch."""
+
+    def __init__(self, topic):
+        self.topic, self.offset = topic, 0
+
+    def poll(self, max_records):
+        self.offset += 1
+        return [Record(self.topic, 0, self.offset - 1, None, '{"ts_ms": 1}')]
+
+    def close(self):
+        pass
+
+
+def test_heartbeats_alone_count_as_idle(cfg):
+    c = Consumer(cfg, Lake(cfg.path("lake")))
+    src = HeartbeatsForever(cfg.heartbeat_topic)
+    result = c.run(src, idle_polls=3, max_batches=50)
+    assert result["batches"] == 3 and src.offset == 3
+    assert c.offsets == {f"{cfg.heartbeat_topic}:0": 3}
